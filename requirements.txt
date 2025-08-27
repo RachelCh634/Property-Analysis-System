@@ -1,0 +1,46 @@
+# Core Framework
+crewai
+langchain
+langchain-community
+
+# Web Framework
+streamlit
+fastapi
+uvicorn[standard]
+
+# Web Scraping
+beautifulsoup4
+selenium
+playwright
+requests
+lxml
+
+# LLM & Search Integration
+openai
+tavily-python
+langsmith
+
+# Data Processing
+pandas
+numpy
+
+# Configuration & Utilities
+pydantic
+python-dotenv
+pyyaml
+python-multipart
+
+# Async Support
+aiohttp
+httpx
+
+# Logging & Monitoring
+loguru
+
+# Additional Utilities
+tenacity
+tqdm
+
+# Testing
+pytest
+pytest-asyncio

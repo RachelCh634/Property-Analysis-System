@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  app:
+    build: .
+    container_name: property_analysis
+    ports:
+      - "8501:8501"  # Streamlit
+      - "8000:8000"  # FastAPI
+    env_file:
+      - .env
+    environment:
+      - WORKERS=10 
+    volumes:
+      - ./logs:/app/logs
+    restart: unless-stopped
+    shm_size: '2gb'

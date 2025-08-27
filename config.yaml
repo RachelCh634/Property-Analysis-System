@@ -1,0 +1,117 @@
+# Application Configuration
+app:
+  name: "Property Analysis System"
+  version: "1.0.0"
+  environment: ${APP_ENV}
+  log_level: ${LOG_LEVEL}
+
+# Agent Configuration (matching your actual code)
+agents:
+  scraping_agent:
+    role: "Property Data Extractor"
+    goal: "Extract comprehensive property data from ZIMAS LA City Planning"
+    backstory: "You are an expert at navigating ZIMAS and extracting structured property information from LA City Planning."
+    max_retries: 3
+    timeout: 30
+    
+  research_agent:
+    role: "Property Research Specialist"
+    goal: "Find additional context and market information"
+    backstory: "You specialize in finding relevant property information from various online sources."
+    search_depth: "advanced"
+    max_results: 5
+    
+  analysis_agent:
+    role: "Property Analysis Expert"
+    goal: "Analyze data and generate insights"
+    backstory: "You are a real estate analyst who synthesizes data into actionable insights."
+    temperature: 0.7
+    max_tokens: 3000
+
+# Scraping Configuration (for ZIMAS, not planning.lacity.gov)
+scraping:
+  base_url: "https://zimas.lacity.org"
+  timeout: 30
+  retry_attempts: 3
+  wait_between_requests: 2
+  headless: false  # Matching your code
+  debug: true
+  
+  # Actual selectors used in your code
+  selectors:
+    house_number_field: "txtHouseNumber"
+    street_name_field: "txtStreetName"
+    search_button: "btnSearchGo"
+    accept_terms: "//input[@value='Accept']"
+  
+  # Categories your code actually extracts
+  core_categories:
+    - "address_legal"
+    - "planning_zoning"
+    - "assessor"
+    - "case_numbers"
+    - "citywide_code_amendment"
+    - "housing"
+
+# LLM Configuration (matching your actual model)
+llm:
+  provider: "openrouter"
+  base_url: "https://openrouter.ai/api/v1"
+  default_model: "qwen/qwen-2.5-72b-instruct"  # Your actual model
+  fallback_model: "anthropic/claude-3-opus"
+  temperature: 0.7
+  max_tokens: 3000
+  
+  prompts:
+    system: |
+      You are a real estate analysis expert specializing in Los Angeles properties. 
+      Analyze the complete property data provided and generate comprehensive insights.
+      Focus on specific zoning details, development opportunities, regulatory requirements,
+      and actionable recommendations based on the actual data provided.
+    
+    analysis_template: |
+      Analyze this Los Angeles property using ALL the available data below.
+      Extract and synthesize insights from the complete dataset provided.
+      
+      {scraped_summary}
+      
+      {search_summary}
+      
+      Provide a comprehensive property analysis using ALL relevant information from both sources.
+
+# Search Configuration (Tavily)
+search:
+  provider: "tavily"
+  search_depth: "advanced"
+  max_results_per_query: 5
+  timeout: 15
+  
+  query_templates:
+    - "{address} Los Angeles property information"
+    - "{address} zoning regulations"
+    - "{address} property value assessment"
+    - "{address} neighborhood development plans"
+    - "{address} recent sales comparable properties"
+
+# Monitoring Configuration
+monitoring:
+  provider: "langsmith"
+  project_name: "property-analysis"
+  trace_sample_rate: 1.0
+  log_level: "INFO"
+  tracing_enabled: true
+
+# Performance Settings
+performance:
+  max_concurrent_requests: 10
+  request_timeout: 120
+  cache_ttl: 3600
+  max_cache_size: 100
+
+# API Settings (from your FastAPI code)
+api:
+  title: "Property Analysis API"
+  version: "1.0.0"
+  host: "0.0.0.0"
+  port: 8000
+  cors_origins: ["*"]
