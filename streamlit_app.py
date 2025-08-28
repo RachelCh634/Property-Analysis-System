@@ -17,6 +17,15 @@ API_URL = "http://localhost:8000"
 if 'session_id' not in st.session_state:
     st.session_state.session_id = str(uuid.uuid4())
 
+if 'session_id' not in st.session_state:
+    st.session_state.session_id = str(uuid.uuid4())
+
+if 'analysis_result' not in st.session_state:
+    st.session_state.analysis_result = None
+
+if 'current_address' not in st.session_state:
+    st.session_state.current_address = ""
+
 def validate_address(house_number, street_name):
     """Validate that house_number is numeric and street_name contains only English letters and allowed characters."""
     if not house_number.isdigit():
@@ -163,6 +172,63 @@ def display_progress_with_status(task_id):
         
         time.sleep(3)
 
+def send_chat_message(message, analysis_context=None):
+    """Send a chat message to the backend and get a response."""
+    try:
+        payload = {
+            "message": message,
+            "session_id": st.session_state.session_id
+        }
+        
+        if analysis_context:
+            payload["context"] = analysis_context
+            payload["address"] = st.session_state.current_address
+        
+        response = requests.post(
+            f"{API_URL}/api/chat",
+            json=payload,
+            timeout=120
+        )
+        
+        if response.status_code == 200:
+            data = response.json()
+            return data.get('response', 'Sorry, I could not process your message.')
+        else:
+            return f"Error: {response.status_code} - {response.text}"
+            
+    except requests.exceptions.Timeout:
+        return "Request timed out. Please try again."
+    except requests.exceptions.ConnectionError:
+        return "Cannot connect to backend server."
+    except Exception as e:
+        return f"Unexpected error: {str(e)}"
+
+def display_chat_interface():
+    """Display the chat interface for follow-up questions."""
+    if not st.session_state.analysis_result:
+        return  
+    
+    st.markdown("---")
+    st.subheader("Ask Follow-up Questions")
+    st.info(f"Ask questions about the analysis for: **{st.session_state.current_address}**")
+    
+    chat_input = st.text_input(
+        "Ask a question about the property analysis:",
+        placeholder="e.g., What are the main investment risks? Can you explain the zoning details?",
+        key="chat_input"
+    )
+    
+    send_chat = st.button("Send", type="primary", disabled=not chat_input.strip())
+    
+    if send_chat and chat_input.strip():
+        with st.spinner("Getting response..."):
+            analysis_content = extract_analysis_content(st.session_state.analysis_result)
+            bot_response = send_chat_message(chat_input.strip(), analysis_content)
+            
+            st.markdown("### Response:")
+            st.markdown(bot_response)
+
+
 st.markdown("### Enter Property Address:")
 
 col1, col2 = st.columns([1, 2])
@@ -188,6 +254,7 @@ with col2:
 
 if analyze_button:
     full_address = f"{house_number.strip()} {street_name.strip()}"
+    st.session_state.current_address = full_address
     
     st.markdown("---")
     st.subheader(f"Analyzing: {full_address}")
@@ -206,6 +273,7 @@ if analyze_button:
             
             if result_status == 'completed':
                 st.balloons()
+                st.session_state.analysis_result = result
                 analysis_content = extract_analysis_content(result)
                 
                 st.markdown("---")
@@ -265,6 +333,9 @@ if analyze_button:
         st.error(f"Failed to start analysis: {error}")
         st.info("Please check if the backend server is running and accessible")
 
+if st.session_state.analysis_result:
+    display_chat_interface()
+
 st.markdown("---")
 
 col1, col2 = st.columns(2)
@@ -291,6 +362,8 @@ with col2:
     st.markdown("### Session Info:")
     st.caption(f"Session ID: {st.session_state.session_id[:8]}...")
     st.caption(f"Last check: {datetime.now().strftime('%H:%M:%S')}")
+    if st.session_state.analysis_result:
+        st.caption(f"Analysis available for: {st.session_state.current_address}")
 
 with st.expander("Debug Information"):
     if st.button("Test Backend Connection"):
@@ -301,3 +374,10 @@ with st.expander("Debug Information"):
                 st.json(health_resp.json())
             except Exception as e:
                 st.error(f"Connection test failed: {str(e)}")
+    
+    if st.button("Show Session State"):
+        st.json({
+            "session_id": st.session_state.session_id,
+            "current_address": st.session_state.current_address,
+            "has_analysis_result": st.session_state.analysis_result is not None
+        })

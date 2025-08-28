@@ -1,10 +1,9 @@
 import os
 from openai import OpenAI
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 import logging
 from dotenv import load_dotenv
 from langsmith import traceable
-import json
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -12,6 +11,7 @@ logger = logging.getLogger(__name__)
 class LLMProcessor:
     """
     OpenRouter LLM integration for property analysis - returns raw strings with complete data
+    Now includes chat functionality for follow-up questions
     """
     
     def __init__(self):
@@ -46,9 +46,9 @@ class LLMProcessor:
                     {
                         "role": "system",
                         "content": """You are a real estate analysis expert specializing in Los Angeles properties. 
-                                    Analyze the complete property data provided and generate comprehensive insights.
-                                    Focus on specific zoning details, development opportunities, regulatory requirements,
-                                    and actionable recommendations based on the actual data provided."""
+Analyze the complete property data provided and generate comprehensive insights.
+Focus on specific zoning details, development opportunities, regulatory requirements,
+and actionable recommendations based on the actual data provided."""
                     },
                     {
                         "role": "user",
@@ -70,130 +70,188 @@ class LLMProcessor:
             logger.error(f"LLM analysis failed: {e}")
             return f"LLM Analysis Error: {str(e)}"
     
+    def process_chat_message(
+        self,
+        message: str,
+        analysis_context: Optional[str] = None,
+        address: Optional[str] = None,
+        session_id: Optional[str] = None
+    ) -> str:
+        """
+        Process a follow-up question about a property analysis using the same LLM.
+        """
+        try:
+            logger.info(f"Processing chat message for session {session_id or 'unknown'}: {message[:100]}...")
+            
+            prompt = self._create_chat_prompt(message, analysis_context, address)
+            logger.info(f"Chat prompt length: {len(prompt)} characters")
+            
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": """You are a professional real estate analysis assistant specializing in Los Angeles properties. 
+You help users understand property analysis results by answering follow-up questions in a clear, 
+professional manner. Focus on providing specific, actionable insights based on the analysis data provided.
+Answer briefly and professionally. Limit to 50-800 words."""
+                    },
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ],
+                temperature=0.3, 
+                max_tokens=1000
+            )
+            
+            chat_response = response.choices[0].message.content
+            logger.info(f"Chat LLM response generated for session {session_id or 'unknown'}")
+            logger.info(f"Chat response length: {len(chat_response)}")
+            
+            return chat_response
+            
+        except Exception as e:
+            logger.error(f"Chat message processing failed: {str(e)}")
+            return "I apologize, but I'm experiencing technical difficulties processing your question. Please try again."
+    
+    def _create_chat_prompt(self, message: str, context: Optional[str], address: Optional[str]) -> str:
+        """Create optimized prompt for chat interactions."""
+        
+        prompt_parts = []
+        prompt_parts.append(f"User's question: {message}")
+        
+        if address:
+            prompt_parts.append(f"Property address: {address}")
+        
+        if context and context.strip():
+            prompt_parts.append(f"""
+Previous property analysis:
+{context}
+
+Please answer the user's question based on this analysis. Be specific and reference relevant details from the analysis data.""")
+        else:
+            prompt_parts.append("""
+No previous analysis context is available. Please inform the user that they need to complete a property analysis first to get specific insights about a property.""")
+        
+        prompt_parts.append("""
+Guidelines for your response:
+- Be professional and helpful
+- Use specific details from the analysis when available
+- If you cannot answer based on the provided information, be honest about limitations
+- Keep responses focused and relevant to real estate analysis
+- Format your response in clear, readable paragraphs
+- Provide actionable insights when possible""")
+        
+        return "\n".join(prompt_parts)
+    
     @traceable
     def _create_analysis_prompt(
         self,
         scraped_data: Dict[str, Any],
         search_results: List[Dict[str, Any]]
     ) -> str:
-        """Create prompt with complete raw data - no filtering or summarization"""
+        """Create prompt for full property analysis with all sections and full content."""
         
         scraped_summary = self._pass_complete_scraped_data(scraped_data)
         search_summary = self._pass_complete_search_results(search_results)
         
         prompt = f"""
-        Analyze this Los Angeles property using ALL the available data below.
-        Extract and synthesize insights from the complete dataset provided.
-        
-        {scraped_summary}
-        
-        {search_summary}
-        
-        Provide a comprehensive property analysis using ALL relevant information from both sources.
-        Focus on:
-        - Specific zoning requirements and implications
-        - Development opportunities and constraints
-        - Transit and location advantages
-        - Historic preservation requirements
-        - Market context from web sources
-        - Actionable investment insights
-        
-        Use the actual data values provided rather than general assumptions.
-        """
-        
+Analyze this Los Angeles property using ALL available data below. Provide a complete and structured property analysis including all sections.
+
+{scraped_summary}
+
+{search_summary}
+
+Instructions:
+- Use all data provided; do NOT assume or generalize.
+- Include all of the following sections explicitly in your response:
+  1. Property Identification
+  2. Location Details
+  3. Zoning Information
+  4. Planning & Development Opportunities
+  5. Permits & Compliance
+  6. Transit & Location Advantages
+  7. Historic Preservation Requirements
+  8. Market Context
+  9. Investment and Actionable Insights
+- Ensure each section is clearly labeled.
+- Include any relevant details from raw text and web search results.
+- Maintain professional, readable formatting.
+- Base all insights strictly on the data provided.
+"""
         return prompt
     
-    def _pass_complete_scraped_data(self, scraped_data: Dict[str, Any]) -> str:
-        """Pass ALL scraped ZIMAS data directly to LLM without filtering"""
+    def _pass_complete_scraped_data(self, scraped_data: Dict[str, Any], chunk_size: int = 2000) -> str:
+        """Pass all scraped ZIMAS data directly to LLM in full, split into chunks."""
         if not scraped_data:
             return "No ZIMAS data available"
         
-        try:
-            # Include the complete property data structure
-            output = ["=== COMPLETE ZIMAS PROPERTY DATA ==="]
-            
-            if scraped_data.get('search_successful'):
-                output.append("✓ ZIMAS Search: SUCCESSFUL")
-            else:
-                output.append("✗ ZIMAS Search: FAILED")
-                
-            property_data = scraped_data.get('property_data', {})
-            
-            structured_data = property_data.get('structured_data', {})
-            all_fields = structured_data.get('all_extracted_fields', {})
-            
-            if all_fields:
-                output.append(f"\n--- ALL EXTRACTED PROPERTY FIELDS ({len(all_fields)} total) ---")
-                for key, value in all_fields.items():
-                    output.append(f"{key}: {value}")
-            
-            all_tables = property_data.get('all_tables', [])
-            if all_tables:
-                output.append(f"\n--- ALL TABLE DATA ({len(all_tables)} tables) ---")
-                for i, table in enumerate(all_tables):
-                    output.append(f"\nTable {i+1}: {table.get('name', 'Unnamed')}")
-                    data_dict = table.get('data_dict', {})
-                    if data_dict:
-                        for key, value in data_dict.items():
-                            output.append(f"  {key}: {value}")
-                    
-                    rows = table.get('rows', [])
-                    if rows and not data_dict:
-                        output.append("  Raw rows:")
-                        for row in rows[:5]:  
-                            if row and any(cell.strip() for cell in row):
-                                output.append(f"    {' | '.join(str(cell) for cell in row)}")
-            
-            categorized_sections = ['property_identification', 'location_details', 
-                                  'zoning_information', 'planning_details', 'permits_compliance']
-            
-            for section in categorized_sections:
-                section_data = structured_data.get(section, {})
-                if section_data:
-                    output.append(f"\n--- {section.upper().replace('_', ' ')} ---")
-                    for key, value in section_data.items():
-                        output.append(f"{key}: {value}")
-            
-            raw_text = property_data.get('raw_text', '')
-            if raw_text and len(raw_text) > 100:
-                output.append(f"\n--- RAW PAGE TEXT (first 1000 chars) ---")
-                output.append(raw_text[:1000] + "..." if len(raw_text) > 1000 else raw_text)
-            
-            return '\n'.join(output)
-            
-        except Exception as e:
-            logger.warning(f"Error formatting scraped data: {e}")
-            try:
-                return f"=== COMPLETE ZIMAS DATA (JSON) ===\n{json.dumps(scraped_data, indent=2, ensure_ascii=False)[:5000]}"
-            except:
-                return f"=== COMPLETE ZIMAS DATA (STRING) ===\n{str(scraped_data)[:5000]}"
-    
-    def _pass_complete_search_results(self, search_results: List[Dict[str, Any]]) -> str:
-        """Pass ALL search results directly to LLM"""
-        if not search_results:
-            return "\n=== NO WEB SEARCH RESULTS AVAILABLE ==="
+        output = ["COMPLETE ZIMAS PROPERTY DATA"]
+        output.append(f"ZIMAS Search: {'SUCCESSFUL' if scraped_data.get('search_successful') else 'FAILED'}")
         
-        try:
-            output = [f"\n=== COMPLETE WEB SEARCH RESULTS ({len(search_results)} results) ==="]
+        property_data = scraped_data.get('property_data', {})
+        structured_data = property_data.get('structured_data', {})
+        all_fields = structured_data.get('all_extracted_fields', {})
+        
+        if all_fields:
+            output.append(f"ALL EXTRACTED PROPERTY FIELDS ({len(all_fields)} total):")
+            for key, value in all_fields.items():
+                output.append(f"{key}: {value}")
+        
+        all_tables = property_data.get('all_tables', [])
+        if all_tables:
+            output.append(f"ALL TABLE DATA ({len(all_tables)} tables):")
+            for i, table in enumerate(all_tables):
+                output.append(f"Table {i+1}: {table.get('name', 'Unnamed')}")
+                data_dict = table.get('data_dict', {})
+                if data_dict:
+                    for key, value in data_dict.items():
+                        output.append(f"{key}: {value}")
+                rows = table.get('rows', [])
+                if rows and not data_dict:
+                    for row in rows:
+                        if row and any(str(cell).strip() for cell in row):
+                            output.append(" | ".join(str(cell) for cell in row))
+        
+        sections = ['property_identification', 'location_details', 
+                    'zoning_information', 'planning_details', 'permits_compliance']
+        for section in sections:
+            section_data = structured_data.get(section, {})
+            if section_data:
+                output.append(f"{section.upper()}:")
+                for key, value in section_data.items():
+                    output.append(f"{key}: {value}")
+        
+        raw_text = property_data.get('raw_text', '')
+        if raw_text:
+            output.append("RAW PAGE TEXT:")
+            for i in range(0, len(raw_text), chunk_size):
+                output.append(raw_text[i:i+chunk_size])
+        
+        return '\n'.join(output)
+    
+    def _pass_complete_search_results(self, search_results: List[Dict[str, Any]], chunk_size: int = 1000) -> str:
+        """Pass all web search results directly to LLM in full, split into chunks."""
+        if not search_results:
+            return "NO WEB SEARCH RESULTS AVAILABLE"
+        
+        output = [f"COMPLETE WEB SEARCH RESULTS ({len(search_results)} results)"]
+        
+        for i, result in enumerate(search_results):
+            output.append(f"RESULT {i+1}:")
+            title = result.get('title', 'No title')
+            url = result.get('url', 'No URL')
+            score = result.get('score', 'No score')
+            content = result.get('content', '')
             
-            for i, result in enumerate(search_results):
-                output.append(f"\n--- RESULT {i+1} ---")
-                
-                title = result.get('title', 'No title')
-                url = result.get('url', 'No URL')
-                score = result.get('score', 'No score')
-                content = result.get('content', 'No content')
-                
-                output.append(f"Title: {title}")
-                output.append(f"URL: {url}")
-                output.append(f"Relevance Score: {score}")
-                output.append(f"Content: {content[:500]}{'...' if len(content) > 500 else ''}")
+            output.append(f"Title: {title}")
+            output.append(f"URL: {url}")
+            output.append(f"Relevance Score: {score}")
             
-            return '\n'.join(output)
-            
-        except Exception as e:
-            logger.warning(f"Error formatting search results: {e}")
-            try:
-                return f"\n=== COMPLETE WEB SEARCH RESULTS (JSON) ===\n{json.dumps(search_results, indent=2, ensure_ascii=False)[:3000]}"
-            except:
-                return f"\n=== COMPLETE WEB SEARCH RESULTS (STRING) ===\n{str(search_results)[:3000]}"
+            if content:
+                output.append("Content:")
+                for j in range(0, len(content), chunk_size):
+                    output.append(content[j:j+chunk_size])
+        
+        return '\n'.join(output)

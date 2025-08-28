@@ -4,7 +4,8 @@ import logging
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from services import PropertyAnalysisService
-from models import PropertyAnalysisRequest, PropertyAnalysisResponse
+from models import PropertyAnalysisRequest, PropertyAnalysisResponse, ChatRequest
+from typing import Optional
 import uuid
 
 logging.basicConfig(level=logging.INFO)
@@ -38,6 +39,7 @@ async def root():
         "endpoints": {
             "analyze": "/api/analyze",
             "status": "/api/status/{task_id}",
+            "chat": "/api/chat",
             "health": "/health"
         }
     }
@@ -50,6 +52,66 @@ async def health_check():
         "status": "healthy",
         "active_tasks": active_count
     }
+
+@app.post("/api/chat")
+async def chat_endpoint(request: ChatRequest):
+    """
+    Handle chat messages from users with follow-up questions about property analysis.
+    """
+    try:
+        logger.info(f"Received chat message from session {request.session_id}: {request.message[:100]}...")
+        
+        if not request.message.strip():
+            raise HTTPException(status_code=400, detail="Message cannot be empty")
+        
+        response = await process_chat_message(
+            message=request.message,
+            context=request.context,
+            address=request.address,
+            session_id=request.session_id
+        )
+        
+        logger.info(f"Chat response generated for session {request.session_id}")
+        
+        return {
+            "response": response,
+            "status": "success"
+        }
+        
+    except Exception as e:
+        logger.error(f"Error in chat endpoint: {str(e)}")
+        return {
+            "response": "Sorry, I encountered an error while processing your message. Please try again.",
+            "status": "error",
+            "error": str(e)
+        }
+
+async def process_chat_message(message: str, context: Optional[str], address: Optional[str], session_id: str) -> str:
+    """
+    Process chat message using the existing analysis system's LLM.
+    """
+    try:
+        logger.info(f"Processing chat message for session {session_id}")
+        
+        from llm_integration import LLMProcessor
+        
+        llm_processor = LLMProcessor()
+        
+        loop = asyncio.get_event_loop()
+        response = await loop.run_in_executor(
+            executor,
+            llm_processor.process_chat_message,
+            message,
+            context,
+            address,
+            session_id
+        )
+        
+        return response
+        
+    except Exception as e:
+        logger.error(f"Error processing chat message: {str(e)}")
+        return "I apologize, but I'm having trouble processing your question right now. Please try again."
 
 async def run_analysis_in_background(task_id: str, address: str, depth):
     """Run analysis in background using thread pool"""

@@ -17,7 +17,7 @@ An AI-powered multi-agent system for comprehensive property analysis in Los Ange
 - **Agentic Framework**: CrewAI
 - **Frontend**: Streamlit
 - **Backend**: FastAPI
-- **LLM**: OpenRouter API (Claude 3 Opus / GPT-4)
+- **LLM**: OpenRouter API 
 - **Search**: Tavily API
 - **Monitoring**: LangSmith
 - **Web Scraping**: Selenium, BeautifulSoup4, Playwright

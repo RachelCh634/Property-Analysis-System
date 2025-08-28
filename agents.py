@@ -9,6 +9,7 @@ from search_integration import TavilySearcher
 from llm_integration import LLMProcessor
 from langsmith import traceable
 import os
+from datetime import datetime
 
 os.environ["LANGCHAIN_TRACING_V2"] = "true"
 
@@ -169,6 +170,31 @@ class LLMTool(BaseTool):
         self._llms = {}
         self._lock = threading.Lock()
 
+class ReportFormatterTool(BaseTool):
+    """Minimal report formatting tool"""
+    name: str = "Report Formatter"
+    description: str = "Format property reports"
+    
+    def __init__(self, **data):
+        super().__init__(**data)
+    
+    @traceable
+    def _run(self, analysis_data: Dict[str, Any], **kwargs):
+        """Generate minimal formatted report"""
+        try:
+            return {
+                "title": f"Property Analysis Report - {analysis_data.get('address', 'Unknown')}",
+                "generated_date": datetime.now().isoformat(),
+                "status": analysis_data.get('status', 'completed'),
+                "data_quality": analysis_data.get('summary', {}).get('analysis_completeness', 'Unknown'),
+                "zimas_successful": analysis_data.get('summary', {}).get('zimas_search_successful', False),
+                "sections_found": len(analysis_data.get('summary', {}).get('sections_found', [])),
+                "key_findings": analysis_data.get('summary', {}).get('key_findings', [])[:3]
+            }
+        except Exception as e:
+            logger.error(f"ReportFormatterTool failed: {str(e)}", exc_info=True)
+            return {"error": f"Report formatting failed: {str(e)}"}
+
 class PropertyAnalysisSystem:
     """Main system orchestrating property analysis workflow"""
     def __init__(self, progress_callback: Optional[Callable[[int, str], None]] = None):
@@ -176,6 +202,7 @@ class PropertyAnalysisSystem:
         self.scraper = ScraperTool()  
         self.searcher = SearcherTool()
         self.llm = LLMTool()
+        self.formatter = ReportFormatterTool()
         self._setup_agents()
     
     def _report_progress(self, progress: int, message: str):
@@ -211,6 +238,15 @@ class PropertyAnalysisSystem:
                 tools=[self.llm],
                 verbose=False
             )
+            
+            self.report_agent = Agent(
+                role="Report Formatter",
+                goal="Format analysis reports",
+                backstory="You format property analysis data into structured reports.",
+                tools=[self.formatter],
+                verbose=False
+            )
+            
         except Exception as e:
             logger.error(f"Agent setup failed: {str(e)}", exc_info=True)
             raise
@@ -224,8 +260,9 @@ class PropertyAnalysisSystem:
         try:
             logger.info(f"Starting property analysis for: {address}")
             
+            # Agent 1: ZIMAS Search
             step_completed = "zimas_search"
-            self._report_progress(20, "Starting ZIMAS property search...")
+            self._report_progress(20, "Agent 1: Starting ZIMAS property search...")
             
             try:
                 property_data = self.scraper._run(address)
@@ -255,7 +292,7 @@ class PropertyAnalysisSystem:
                     }
                 else:
                     logger.info(f"ZIMAS search completed successfully for {address}")
-                    self._report_progress(40, "ZIMAS search completed successfully")
+                    self._report_progress(40, "Agent 1: ZIMAS search completed successfully")
                     
             except Exception as zimas_error:
                 logger.error(f"ZIMAS search failed for {address}: {str(zimas_error)}", exc_info=True)
@@ -281,44 +318,57 @@ class PropertyAnalysisSystem:
                     }
                 }
             
-            search_results = {}
-            
+            # Agent 2: Web Search
             step_completed = "web_search"
-            self._report_progress(65, "Searching for additional property information with Tavily...")
+            self._report_progress(50, "Agent 2: Searching for additional property information...")
             
             try:
                 search_results = self.searcher._run(address)
                 result_count = len(search_results) if isinstance(search_results, list) else 0
                 logger.info(f"Web search completed for {address}: {result_count} results")
+                self._report_progress(65, f"Agent 2: Found {result_count} supplementary sources")
             except Exception as search_error:
                 logger.error(f"Web search failed for {address}: {str(search_error)}", exc_info=True)
                 search_results = []
+                self._report_progress(65, "Agent 2: Web search completed with limited results")
             
-            self._report_progress(80, "Additional property search completed")
-            
+            # Agent 3: AI Analysis
             step_completed = "ai_analysis"
-            self._report_progress(85, "Starting AI analysis and report generation...")
+            self._report_progress(70, "Agent 3: Starting AI analysis...")
             
             try:
                 analysis_result = self.llm._get_llm().analyze_property_data(property_data, search_results)
                 logger.info(f"LLM analysis completed successfully for {address}")
+                self._report_progress(80, "Agent 3: AI analysis completed")
             except Exception as llm_error:
                 logger.warning(f"LLM analysis failed for {address}, using fallback: {str(llm_error)}")
                 analysis_result = self._create_comprehensive_fallback_analysis(property_data, search_results)
+                self._report_progress(80, "Agent 3: Analysis completed with fallback method")
             
-            self._report_progress(95, "Finalizing analysis report...")
+            # Create intermediate result
+            intermediate_result = self._create_result_structure(address, property_data, search_results, analysis_result)
             
-            result = self._create_result_structure(address, property_data, search_results, analysis_result)
+            # Agent 4: Report Formatting
+            step_completed = "report_formatting"
+            self._report_progress(85, "Agent 4: Formatting report...")
             
-            self._report_progress(100, "Analysis completed successfully!")
+            try:
+                formatted_report = self.formatter._run(intermediate_result)
+                intermediate_result['formatted_report'] = formatted_report
+                self._report_progress(95, "Agent 4: Report formatting completed")
+            except Exception as format_error:
+                logger.warning(f"Report formatting failed: {str(format_error)}")
+                intermediate_result['formatted_report'] = {"error": f"Formatting failed: {str(format_error)}"}
+                self._report_progress(95, "Agent 4: Using basic format")
+            
+            self._report_progress(100, "All 4 agents completed!")
             logger.info(f"Analysis completed successfully for: {address}")
-            return result
+            return intermediate_result
             
         except Exception as e:
             logger.error(f"Critical failure in analyze_property for {address}")
             logger.error(f"Failed at step: {step_completed}")
-            logger.error(f"Error type: {type(e).__name__}")
-            logger.error(f"Error message: {str(e)}", exc_info=True)
+            logger.error(f"Error: {str(e)}", exc_info=True)
             
             if self.progress_callback:
                 self.progress_callback(0, f"Analysis failed at {step_completed}: {str(e)}")
@@ -327,9 +377,8 @@ class PropertyAnalysisSystem:
                 "address": address,
                 "status": "failed",
                 "error": str(e),
-                "error_type": type(e).__name__,
                 "step_failed": step_completed,
-                "message": f"A general error occurred: {str(e)}",
+                "message": f"Analysis failed: {str(e)}",
                 "partial_data": {
                     "zimas_data": property_data,
                     "search_data": {}

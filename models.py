@@ -30,3 +30,9 @@ class TaskStatus(BaseModel):
     error: Optional[str]
     created_at: datetime
     updated_at: datetime
+
+class ChatRequest(BaseModel):
+    message: str
+    session_id: str
+    context: Optional[str] = None  
+    address: Optional[str] = None 
