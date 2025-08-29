@@ -230,6 +230,8 @@ def display_chat_interface():
 
 
 st.markdown("### Enter Property Address:")
+st.markdown("###### Address format: Number + Street name only (no directions, no Ave/St/Blvd)")
+st.markdown("###### Examples: 1836 Hill, 1600 Vine, 5930 Franklin.")
 
 col1, col2 = st.columns([1, 2])
 
