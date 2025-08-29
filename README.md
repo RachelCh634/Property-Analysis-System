@@ -14,7 +14,7 @@ An AI-powered multi-agent system for comprehensive property analysis in Los Ange
 
 ## 🛠️ Tech Stack
 
-- **Agentic Framework**: CrewAI
+- **Agentic Framework**: LangChain
 - **Frontend**: Streamlit
 - **Backend**: FastAPI
 - **LLM**: OpenRouter API 
@@ -116,7 +116,7 @@ docker-compose up --build
 property-analysis-system/
 ├── streamlit_app.py       # Streamlit frontend
 ├── main.py               # FastAPI backend
-├── agents.py             # CrewAI agents implementation
+├── agents.py             # LangChain agents implementation
 ├── scraper.py            # Web scraping logic
 ├── llm_integration.py    # OpenRouter LLM integration
 ├── search_integration.py # Tavily search integration

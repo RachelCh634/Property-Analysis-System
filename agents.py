@@ -1,5 +1,8 @@
-from crewai import Agent
-from crewai.agent import BaseTool
+from langchain.tools import BaseTool
+from langchain.agents import AgentExecutor, create_openai_functions_agent
+from langchain_openai import ChatOpenAI
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.messages import SystemMessage
 from pydantic import PrivateAttr
 import logging
 import threading
@@ -16,7 +19,6 @@ os.environ["LANGCHAIN_TRACING_V2"] = "true"
 logger = logging.getLogger(__name__)
 
 class ScraperTool(BaseTool):
-    """ZIMAS LA City Property Scraper with thread-safe operation"""
     name: str = "Property Scraper"
     description: str = "ZIMAS LA City Property Scraper"
     
@@ -29,7 +31,6 @@ class ScraperTool(BaseTool):
         self._lock = threading.Lock()
     
     def _get_scraper(self):
-        """Get thread-specific scraper instance"""
         thread_id = threading.get_ident()
         
         with self._lock:
@@ -38,8 +39,7 @@ class ScraperTool(BaseTool):
             return self._scrapers[thread_id]
 
     @traceable
-    def _run(self, address_data: Dict[str, str], **kwargs):
-        """Execute property scraping with address parsing"""
+    def _run(self, address_data: str) -> Dict:
         try:
             if isinstance(address_data, str):
                 parts = address_data.strip().split(' ', 1)
@@ -81,7 +81,6 @@ class ScraperTool(BaseTool):
         self._lock = threading.Lock()
 
 class SearcherTool(BaseTool):
-    """Online property information searcher with thread safety"""
     name: str = "Property Searcher"
     description: str = "Search for property information online"
     
@@ -94,7 +93,6 @@ class SearcherTool(BaseTool):
         self._lock = threading.Lock()
     
     def _get_searcher(self):
-        """Get thread-specific searcher instance"""
         thread_id = threading.get_ident()
         
         with self._lock:
@@ -103,8 +101,7 @@ class SearcherTool(BaseTool):
             return self._searchers[thread_id]
 
     @traceable
-    def _run(self, query: str, **kwargs):
-        """Execute property information search"""
+    def _run(self, query: str) -> List:
         try:
             searcher = self._get_searcher()
             return searcher.search_property_info(query)
@@ -126,7 +123,6 @@ class SearcherTool(BaseTool):
         self._lock = threading.Lock()
 
 class LLMTool(BaseTool):
-    """LLM processor for data analysis with thread safety"""
     name: str = "LLM Processor"
     description: str = "Process and analyze data using LLM"
     
@@ -139,7 +135,6 @@ class LLMTool(BaseTool):
         self._lock = threading.Lock()
     
     def _get_llm(self):
-        """Get thread-specific LLM instance"""
         thread_id = threading.get_ident()
         
         with self._lock:
@@ -148,8 +143,7 @@ class LLMTool(BaseTool):
             return self._llms[thread_id]
 
     @traceable
-    def _run(self, data: str, prompt: str = "", **kwargs):
-        """Execute LLM analysis on property data"""
+    def _run(self, data: str) -> Dict:
         try:
             llm = self._get_llm()
             return llm.analyze_property_data(data, [])
@@ -171,7 +165,6 @@ class LLMTool(BaseTool):
         self._lock = threading.Lock()
 
 class ReportFormatterTool(BaseTool):
-    """Minimal report formatting tool"""
     name: str = "Report Formatter"
     description: str = "Format property reports"
     
@@ -179,9 +172,15 @@ class ReportFormatterTool(BaseTool):
         super().__init__(**data)
     
     @traceable
-    def _run(self, analysis_data: Dict[str, Any], **kwargs):
-        """Generate minimal formatted report"""
+    def _run(self, analysis_data: str) -> Dict:
         try:
+            if isinstance(analysis_data, str):
+                import json
+                try:
+                    analysis_data = json.loads(analysis_data)
+                except:
+                    analysis_data = {"data": analysis_data}
+            
             return {
                 "title": f"Property Analysis Report - {analysis_data.get('address', 'Unknown')}",
                 "generated_date": datetime.now().isoformat(),
@@ -196,55 +195,104 @@ class ReportFormatterTool(BaseTool):
             return {"error": f"Report formatting failed: {str(e)}"}
 
 class PropertyAnalysisSystem:
-    """Main system orchestrating property analysis workflow"""
     def __init__(self, progress_callback: Optional[Callable[[int, str], None]] = None):
         self.progress_callback = progress_callback
-        self.scraper = ScraperTool()  
-        self.searcher = SearcherTool()
-        self.llm = LLMTool()
-        self.formatter = ReportFormatterTool()
-        self._setup_agents()
+        self.scraper_tool = ScraperTool()
+        self.searcher_tool = SearcherTool()
+        self.llm_tool = LLMTool()
+        self.formatter_tool = ReportFormatterTool()
+        self._setup_langchain_agents()
     
     def _report_progress(self, progress: int, message: str):
-        """Report progress to callback and logger"""
         if self.progress_callback:
             self.progress_callback(progress, message)
         logger.info(f"Progress: {progress}% - {message}")
     
     @traceable
-    def _setup_agents(self):
-        """Initialize CrewAI agents with specific roles and tools"""
+    def _setup_langchain_agents(self):
         try:
-            self.scraping_agent = Agent(
-                role="Property Data Extractor",
-                goal="Extract comprehensive property data from ZIMAS LA City Planning",
-                backstory="You are an expert at navigating ZIMAS and extracting structured property information from LA City Planning.",
-                tools=[self.scraper], 
-                verbose=False
+            self.llm = ChatOpenAI(
+                openai_api_key=os.getenv("OPENROUTER_API_KEY", ""),
+                openai_api_base="https://openrouter.ai/api/v1",
+                model="qwen/qwen-2.5-72b-instruct",
+                temperature=0.3,
+                max_tokens=4000
             )
             
-            self.research_agent = Agent(
-                role="Property Research Specialist",
-                goal="Find additional context and market information",
-                backstory="You specialize in finding relevant property information from various online sources.",
-                tools=[self.searcher],
-                verbose=False
+            self.scraping_prompt = ChatPromptTemplate.from_messages([
+                SystemMessage(content="You are an expert at navigating ZIMAS and extracting structured property information from LA City Planning."),
+                ("user", "{input}"),
+                MessagesPlaceholder(variable_name="agent_scratchpad")
+            ])
+            
+            self.research_prompt = ChatPromptTemplate.from_messages([
+                SystemMessage(content="You specialize in finding relevant property information from various online sources."),
+                ("user", "{input}"),
+                MessagesPlaceholder(variable_name="agent_scratchpad")
+            ])
+            
+            self.analysis_prompt = ChatPromptTemplate.from_messages([
+                SystemMessage(content="You are a real estate analyst who synthesizes data into actionable insights."),
+                ("user", "{input}"),
+                MessagesPlaceholder(variable_name="agent_scratchpad")
+            ])
+            
+            self.report_prompt = ChatPromptTemplate.from_messages([
+                SystemMessage(content="You format property analysis data into structured reports."),
+                ("user", "{input}"),
+                MessagesPlaceholder(variable_name="agent_scratchpad")
+            ])
+            
+            self.scraping_agent = create_openai_functions_agent(
+                self.llm,
+                [self.scraper_tool],
+                self.scraping_prompt
             )
             
-            self.analysis_agent = Agent(
-                role="Property Analysis Expert",
-                goal="Analyze data and generate insights",
-                backstory="You are a real estate analyst who synthesizes data into actionable insights.",
-                tools=[self.llm],
-                verbose=False
+            self.research_agent = create_openai_functions_agent(
+                self.llm,
+                [self.searcher_tool],
+                self.research_prompt
             )
             
-            self.report_agent = Agent(
-                role="Report Formatter",
-                goal="Format analysis reports",
-                backstory="You format property analysis data into structured reports.",
-                tools=[self.formatter],
-                verbose=False
+            self.analysis_agent = create_openai_functions_agent(
+                self.llm,
+                [self.llm_tool],
+                self.analysis_prompt
+            )
+            
+            self.report_agent = create_openai_functions_agent(
+                self.llm,
+                [self.formatter_tool],
+                self.report_prompt
+            )
+            
+            self.scraping_executor = AgentExecutor(
+                agent=self.scraping_agent,
+                tools=[self.scraper_tool],
+                verbose=False,
+                max_iterations=3
+            )
+            
+            self.research_executor = AgentExecutor(
+                agent=self.research_agent,
+                tools=[self.searcher_tool],
+                verbose=False,
+                max_iterations=3
+            )
+            
+            self.analysis_executor = AgentExecutor(
+                agent=self.analysis_agent,
+                tools=[self.llm_tool],
+                verbose=False,
+                max_iterations=3
+            )
+            
+            self.report_executor = AgentExecutor(
+                agent=self.report_agent,
+                tools=[self.formatter_tool],
+                verbose=False,
+                max_iterations=3
             )
             
         except Exception as e:
@@ -253,19 +301,17 @@ class PropertyAnalysisSystem:
 
     @traceable
     async def analyze_property(self, address: str) -> Dict[str, Any]:
-        """Main analysis workflow with comprehensive error handling"""
         step_completed = "initialization"
         property_data = {}
         
         try:
             logger.info(f"Starting property analysis for: {address}")
             
-            # Agent 1: ZIMAS Search
             step_completed = "zimas_search"
             self._report_progress(20, "Agent 1: Starting ZIMAS property search...")
             
             try:
-                property_data = self.scraper._run(address)
+                property_data = self.scraper_tool._run(address)
                 
                 if not property_data.get('search_successful', False):
                     error_message = property_data.get('error', 'No data found for this address')
@@ -318,12 +364,11 @@ class PropertyAnalysisSystem:
                     }
                 }
             
-            # Agent 2: Web Search
             step_completed = "web_search"
             self._report_progress(50, "Agent 2: Searching for additional property information...")
             
             try:
-                search_results = self.searcher._run(address)
+                search_results = self.searcher_tool._run(address)
                 result_count = len(search_results) if isinstance(search_results, list) else 0
                 logger.info(f"Web search completed for {address}: {result_count} results")
                 self._report_progress(65, f"Agent 2: Found {result_count} supplementary sources")
@@ -332,12 +377,11 @@ class PropertyAnalysisSystem:
                 search_results = []
                 self._report_progress(65, "Agent 2: Web search completed with limited results")
             
-            # Agent 3: AI Analysis
             step_completed = "ai_analysis"
             self._report_progress(70, "Agent 3: Starting AI analysis...")
             
             try:
-                analysis_result = self.llm._get_llm().analyze_property_data(property_data, search_results)
+                analysis_result = self.llm_tool._get_llm().analyze_property_data(property_data, search_results)
                 logger.info(f"LLM analysis completed successfully for {address}")
                 self._report_progress(80, "Agent 3: AI analysis completed")
             except Exception as llm_error:
@@ -345,15 +389,14 @@ class PropertyAnalysisSystem:
                 analysis_result = self._create_comprehensive_fallback_analysis(property_data, search_results)
                 self._report_progress(80, "Agent 3: Analysis completed with fallback method")
             
-            # Create intermediate result
             intermediate_result = self._create_result_structure(address, property_data, search_results, analysis_result)
             
-            # Agent 4: Report Formatting
             step_completed = "report_formatting"
             self._report_progress(85, "Agent 4: Formatting report...")
             
             try:
-                formatted_report = self.formatter._run(intermediate_result)
+                import json
+                formatted_report = self.formatter_tool._run(json.dumps(intermediate_result))
                 intermediate_result['formatted_report'] = formatted_report
                 self._report_progress(95, "Agent 4: Report formatting completed")
             except Exception as format_error:
@@ -386,7 +429,6 @@ class PropertyAnalysisSystem:
             }
     
     def _create_result_structure(self, address: str, property_data: dict, search_results: list, analysis_result: Any) -> Dict[str, Any]:
-        """Build comprehensive result structure"""
         return {
             "address": address,
             "status": "completed", 
@@ -406,7 +448,6 @@ class PropertyAnalysisSystem:
         }
     
     def _count_zimas_sections(self, zimas_data: dict) -> List[str]:
-        """Count and identify available ZIMAS data sections"""
         sections_found = []
         property_data = zimas_data.get('property_data', {})
         
@@ -432,7 +473,6 @@ class PropertyAnalysisSystem:
         return sections_found
     
     def _calculate_completeness(self, zimas_data: dict, search_results: dict) -> str:
-        """Calculate data completeness score"""
         score = 0
         
         if zimas_data and zimas_data.get('search_successful'):
@@ -464,7 +504,6 @@ class PropertyAnalysisSystem:
             return "Low"
     
     def _extract_key_findings(self, analysis_result) -> List[str]:
-        """Extract key findings from analysis result"""
         findings = []
         
         if isinstance(analysis_result, str):
@@ -472,7 +511,7 @@ class PropertyAnalysisSystem:
             for line in lines:
                 line = line.strip()
                 if any(keyword in line.lower() for keyword in ['key', 'important', 'finding', 'recommend']):
-                    if len(line) > 20:  
+                    if len(line) > 20:
                         clean_line = line.lstrip('•-*123456789. #').strip()
                         if clean_line:
                             findings.append(clean_line)
@@ -502,7 +541,6 @@ class PropertyAnalysisSystem:
         return findings[:5] if findings else ["Analysis completed - see full analysis for details"]
     
     def _create_comprehensive_fallback_analysis(self, zimas_data: dict, search_results: list) -> dict:
-        """Create fallback analysis when LLM processing fails"""
         analysis = {
             "Property Overview": "",
             "ZIMAS Search Results": "",
