@@ -57,7 +57,6 @@ class ScraperTool(BaseTool):
             
             scraper = self._get_scraper()
             result = scraper.comprehensive_address_search(address_data)
-            result = clean_data(result)
             return result
             
         except Exception as e:
@@ -635,60 +634,3 @@ class PropertyAnalysisSystem:
             analysis["Key Findings"] = ["Basic property search completed with available data sources"]
         
         return analysis
-    
-def clean_data(raw_json: Dict[str, Any]) -> Dict[str, Any]:
-    empty_values = [
-        '', ' ', 'null', 'undefined', None,
-        'No data for building 1',
-        'No data for building 2',
-        'No data for building 3',
-        'No data for building 4',
-        'No data for building 5'
-    ]
-
-    cleaned_data = {
-        'property_info': {},
-        'summary': {},
-        'search_successful': raw_json.get('search_successful', False),
-        'address_data': raw_json.get('address_data', {})
-    }
-
-    if 'property_data' in raw_json:
-        property_data = raw_json['property_data']
-    elif 'zimas_data' in raw_json.get('raw_data', {}):
-        property_data = raw_json['raw_data']['zimas_data'].get('property_data', {})
-    else:
-        property_data = raw_json
-
-    for category, category_data in property_data.items():
-        if category == "all_tables":
-            continue
-        cleaned_category = {}
-
-        if isinstance(category_data, dict):
-            for field, value in category_data.items():
-                if value not in empty_values and value is not None:
-                    cleaned_category[field] = value
-
-        if cleaned_category:
-            cleaned_data['property_info'][category] = cleaned_category
-
-    if "all_tables" in property_data and isinstance(property_data["all_tables"], list):
-        tables_cleaned = {}
-        for table in property_data["all_tables"]:
-            if isinstance(table, dict) and "rows" in table:
-                table_name = table.get("name", "Unnamed_Table")
-                table_rows = []
-                for row in table["rows"]:
-                    if isinstance(row, list):
-                        clean_row = [v for v in row if v not in empty_values]
-                        if clean_row:
-                            table_rows.append(clean_row)
-                        
-                if table_rows:
-                    tables_cleaned[table_name] = table_rows
-
-        if tables_cleaned:
-            cleaned_data['property_info']["all_tables"] = tables_cleaned
-
-    return cleaned_data

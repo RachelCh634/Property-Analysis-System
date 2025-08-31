@@ -165,6 +165,9 @@ Analyze this Los Angeles property using ALL available data below. Provide a comp
 
 Instructions:
 - Use all data provided; do NOT assume or generalize.
+- If the data has an all_extracted_fields field, it will refer to all of its data and bring it into the relevant categories!!
+- You will add information from all existing fields in the prompt and all their content!!!
+- Do NOT include any fields where the value is exactly "View" (these indicate files or links that should be ignored).
 - Include all of the following sections explicitly in your response:
   1. Property Identification
   2. Location Details
